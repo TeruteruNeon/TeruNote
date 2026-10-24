@@ -709,122 +709,123 @@ function App() {
     changeZoomAt(event.clientX, event.clientY, event.deltaY)
   }
 
-const handleStagePointerDownCapture = (
-  event: PointerEvent<HTMLDivElement>
-) => {
-  if (event.pointerType !== 'touch') return
+  const handleStagePointerDownCapture = (
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (event.pointerType !== 'touch') return
 
-  touchPointersRef.current.set(event.pointerId, {
-    x: event.clientX,
-    y: event.clientY,
-  })
+    touchPointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    })
 
-  if (touchPointersRef.current.size === 2) {
-    isPinchingRef.current = true
+    if (touchPointersRef.current.size === 2) {
+      isPinchingRef.current = true
+
+      const points = [...touchPointersRef.current.values()]
+
+      pinchDistanceRef.current = Math.hypot(
+        points[1].x - points[0].x,
+        points[1].y - points[0].y
+      )
+
+      pinchCenterRef.current = {
+        x: (points[0].x + points[1].x) / 2,
+        y: (points[0].y + points[1].y) / 2,
+      }
+
+      pinchZoomRef.current = zoom
+    }
+  }
+
+  const handleStagePointerMoveCapture = (
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (!touchPointersRef.current.has(event.pointerId)) return
+
+    touchPointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    })
+
+    if (touchPointersRef.current.size !== 2) return
 
     const points = [...touchPointersRef.current.values()]
 
-    pinchDistanceRef.current = Math.hypot(
+    const distance = Math.hypot(
       points[1].x - points[0].x,
       points[1].y - points[0].y
     )
 
-    pinchCenterRef.current = {
-      x: (points[0].x + points[1].x) / 2,
-      y: (points[0].y + points[1].y) / 2,
+    const centerX = (points[0].x + points[1].x) / 2
+    const centerY = (points[0].y + points[1].y) / 2
+
+    const previousCenter = pinchCenterRef.current
+    const previousDistance = pinchDistanceRef.current
+    const previousZoom = pinchZoomRef.current
+
+    const stage = paperStageRef.current
+    if (!stage) return
+
+    const rect = stage.getBoundingClientRect()
+
+    // ① 2本指の中心の移動量を計算
+    const moveX = centerX - previousCenter.x
+    const moveY = centerY - previousCenter.y
+
+    // ② ズームの変化が小さい場合はズームしない
+    const distanceChanged =
+      Math.abs(distance - previousDistance) > 5
+
+    let nextZoom = previousZoom
+
+    if (
+      distanceChanged &&
+      previousDistance > 0 &&
+      distance > 0
+    ) {
+      const ratio = distance / previousDistance
+      const smoothRatio = 1 + (ratio - 1) * 0.7
+
+      nextZoom = Math.min(
+        3,
+        Math.max(0.15, previousZoom * smoothRatio)
+      )
     }
 
-    pinchZoomRef.current = zoom
+    // ③ 移動とズームをまとめてスクロール位置に反映
+    const zoomChanged = nextZoom !== previousZoom
+
+    if (zoomChanged) {
+      const anchorX = stage.scrollLeft - moveX + centerX - rect.left
+      const anchorY = stage.scrollTop - moveY + centerY - rect.top
+
+      stage.scrollLeft =
+        (anchorX / previousZoom) * nextZoom -
+        (centerX - rect.left)
+
+      stage.scrollTop =
+        (anchorY / previousZoom) * nextZoom -
+        (centerY - rect.top)
+
+      pinchZoomRef.current = nextZoom
+      setZoom(nextZoom)
+    } else {
+      stage.scrollLeft -= moveX
+      stage.scrollTop -= moveY
+    }
+
+    // ④ 次回の比較用に位置を更新
+    pinchCenterRef.current = {
+      x: centerX,
+      y: centerY,
+    }
+
+    // ズームした場合のみ距離の基準を更新
+    if (zoomChanged) {
+      pinchDistanceRef.current = distance
+    }
   }
-}
-
-const handleStagePointerMoveCapture = (
-  event: PointerEvent<HTMLDivElement>
-) => {
-  if (!touchPointersRef.current.has(event.pointerId)) return
-
-  touchPointersRef.current.set(event.pointerId, {
-    x: event.clientX,
-    y: event.clientY,
-  })
-
-  if (touchPointersRef.current.size !== 2) return
-
-  const points = [...touchPointersRef.current.values()]
-
-  const distance = Math.hypot(
-    points[1].x - points[0].x,
-    points[1].y - points[0].y
-  )
-
-  const centerX = (points[0].x + points[1].x) / 2
-  const centerY = (points[0].y + points[1].y) / 2
-
-  const previousCenter = pinchCenterRef.current
-  const previousDistance = pinchDistanceRef.current
-  const previousZoom = pinchZoomRef.current
-
-  const stage = paperStageRef.current
-  if (!stage) return
-
-  const rect = stage.getBoundingClientRect()
-
-  // ① 2本指の中心の移動量を計算
-  const moveX = centerX - previousCenter.x
-  const moveY = centerY - previousCenter.y
-
-  // ② ズームの変化が小さい場合はズームしない
-  const distanceChanged =
-    Math.abs(distance - previousDistance) > 3
-
-  let nextZoom = previousZoom
-
-  if (
-    distanceChanged &&
-    previousDistance > 0 &&
-    distance > 0
-  ) {
-    const ratio = distance / previousDistance
-
-    nextZoom = Math.min(
-      3,
-      Math.max(0.15, previousZoom * ratio)
-    )
-  }
-
-  // ③ 移動とズームをまとめてスクロール位置に反映
-  const zoomChanged = nextZoom !== previousZoom
-
-  if (zoomChanged) {
-    const anchorX = stage.scrollLeft - moveX + centerX - rect.left
-    const anchorY = stage.scrollTop - moveY + centerY - rect.top
-
-    stage.scrollLeft =
-      (anchorX / previousZoom) * nextZoom -
-      (centerX - rect.left)
-
-    stage.scrollTop =
-      (anchorY / previousZoom) * nextZoom -
-      (centerY - rect.top)
-
-    pinchZoomRef.current = nextZoom
-    setZoom(nextZoom)
-  } else {
-    stage.scrollLeft -= moveX
-    stage.scrollTop -= moveY
-  }
-
-  // ④ 次回の比較用に位置を更新
-  pinchCenterRef.current = {
-    x: centerX,
-    y: centerY,
-  }
-
-  // ズームした場合のみ距離の基準を更新
-  if (zoomChanged) {
-    pinchDistanceRef.current = distance
-  }
-}
 
   const handleStagePointerUpCapture = (
     event: PointerEvent<HTMLDivElement>
