@@ -504,11 +504,23 @@ function App() {
   const [dragCategoryId, setDragCategoryId] = useState<string | null>(null)
 const [dragPageId, setDragPageId] = useState<string | null>(null)
 
-const dragStartRef = useRef<{ x: number; y: number } | null>(null)
-const dragMovedRef = useRef(false)
-const suppressClickRef = useRef(false)
+const listGestureRef = useRef<{
+  kind: 'category' | 'page'
+  pointerId: number
+  sourceId: string
+  startY: number
+  lastY: number
+  startX: number
+  timer: ReturnType<typeof setTimeout> | null
+  dragging: boolean
+  scrolling: boolean
+  list: HTMLElement
+} | null>(null)
 
-const DRAG_THRESHOLD = 6
+const suppressClickRef = useRef(false)
+const LONG_PRESS_MS = 450
+const MOVE_THRESHOLD = 8
+
   const activeCategory = notebook.categories.find(c => c.id === activeCategoryId) ?? notebook.categories[0]
   const activePage = activeCategory?.pages.find(p => p.id === activePageId) ?? activeCategory?.pages[0]
   const paperDimensions = getNotebookPaperSize(notebook)
@@ -634,44 +646,7 @@ const DRAG_THRESHOLD = 6
     restorePageImage(activePage.id, entry.image)
     setRestoreVersion(version => version + 1)
   }
-  const startListDrag = (
-  event: PointerEvent<HTMLButtonElement>,
-) => {
-  if (event.pointerType === 'mouse' && event.button !== 0) return
-
-  dragStartRef.current = {
-    x: event.clientX,
-    y: event.clientY,
-  }
-  dragMovedRef.current = false
-  suppressClickRef.current = false
-}
-
-const updateListDrag = (
-  event: PointerEvent<HTMLButtonElement>,
-  onStart: () => void,
-) => {
-  const start = dragStartRef.current
-  if (!start) return
-
-  const distance = Math.hypot(
-    event.clientX - start.x,
-    event.clientY - start.y,
-  )
-
-  if (!dragMovedRef.current && distance >= DRAG_THRESHOLD) {
-    dragMovedRef.current = true
-    suppressClickRef.current = true
-    onStart()
-  }
-}
-
-const finishListDrag = () => {
-  dragStartRef.current = null
-  dragMovedRef.current = false
-  setDragCategoryId(null)
-  setDragPageId(null)
-}
+  
   const reorderCategories = (fromId: string, toId: string) => {
     if (fromId === toId) return
     setNotebook(previous => { const items = [...previous.categories]; const from = items.findIndex(item => item.id === fromId); const to = items.findIndex(item => item.id === toId); if (from < 0 || to < 0) return previous; const [moved] = items.splice(from, 1); items.splice(to, 0, moved); return { ...previous, categories: items } })
@@ -680,6 +655,141 @@ const finishListDrag = () => {
     if (!activeCategory || fromId === toId) return
     setNotebook(previous => ({ ...previous, categories: previous.categories.map(category => { if (category.id !== activeCategory.id) return category; const items = [...category.pages]; const from = items.findIndex(item => item.id === fromId); const to = items.findIndex(item => item.id === toId); if (from < 0 || to < 0) return category; const [moved] = items.splice(from, 1); items.splice(to, 0, moved); return { ...category, pages: items } }) }))
   }
+
+  const startListGesture = (
+  event: PointerEvent<HTMLButtonElement>,
+  kind: 'category' | 'page',
+  id: string,
+) => {
+  if (event.pointerType === 'mouse') {
+    if (event.button !== 0) return
+
+    // PCは通常のドラッグで並び替え
+    const list = event.currentTarget.parentElement
+    if (!list) return
+
+    listGestureRef.current = {
+      kind,
+      pointerId: event.pointerId,
+      sourceId: id,
+      startY: event.clientY,
+      lastY: event.clientY,
+      startX: event.clientX,
+      timer: null,
+      dragging: true,
+      scrolling: false,
+      list,
+    }
+
+    suppressClickRef.current = false
+
+    if (kind === 'category') setDragCategoryId(id)
+    else setDragPageId(id)
+
+    return
+  }
+
+  if (event.pointerType !== 'touch') return
+
+  const list = event.currentTarget.parentElement
+  if (!list) return
+
+  const gesture = {
+    kind,
+    pointerId: event.pointerId,
+    sourceId: id,
+    startY: event.clientY,
+    lastY: event.clientY,
+    startX: event.clientX,
+    timer: null as ReturnType<typeof setTimeout> | null,
+    dragging: false,
+    scrolling: false,
+    list,
+  }
+
+  if (listGestureRef.current?.timer) {
+    clearTimeout(listGestureRef.current.timer)
+  }
+
+  listGestureRef.current = gesture
+  suppressClickRef.current = false
+
+  // 長押しが成立したら並び替えを開始
+  gesture.timer = setTimeout(() => {
+    if (listGestureRef.current !== gesture || gesture.scrolling) return
+
+    gesture.dragging = true
+    gesture.timer = null
+    suppressClickRef.current = true
+
+    if (kind === 'category') setDragCategoryId(id)
+    else setDragPageId(id)
+  }, LONG_PRESS_MS)
+}
+
+const moveListGesture = (event: PointerEvent<HTMLDivElement>) => {
+  const gesture = listGestureRef.current
+
+  if (!gesture || gesture.pointerId !== event.pointerId) return
+
+  if (event.pointerType === 'touch' && !gesture.dragging) {
+    const distance = Math.hypot(
+      event.clientX - gesture.startX,
+      event.clientY - gesture.startY,
+    )
+
+    if (distance > MOVE_THRESHOLD) {
+      if (gesture.timer) clearTimeout(gesture.timer)
+      gesture.timer = null
+      gesture.scrolling = true
+
+      // 長押し前のスワイプはスクロール
+      gesture.list.scrollTop -= event.clientY - gesture.lastY
+    }
+  } else if (gesture.dragging) {
+    const element = document.elementFromPoint(event.clientX, event.clientY)
+    const target = element?.closest<HTMLButtonElement>(
+      gesture.kind === 'category'
+        ? '[data-category-id]'
+        : '[data-page-id]',
+    )
+
+    const targetId = target?.dataset[
+      gesture.kind === 'category' ? 'categoryId' : 'pageId'
+    ]
+
+    if (targetId && targetId !== gesture.sourceId) {
+      if (gesture.kind === 'category') {
+        reorderCategories(gesture.sourceId, targetId)
+        setDragCategoryId(targetId)
+      } else {
+        reorderPages(gesture.sourceId, targetId)
+        setDragPageId(targetId)
+      }
+
+      gesture.sourceId = targetId
+    }
+  }
+
+  gesture.lastY = event.clientY
+  if (gesture.dragging && event.pointerType === 'touch') {
+    event.preventDefault()
+  }
+}
+
+const finishListGesture = (event: PointerEvent<HTMLDivElement>) => {
+  const gesture = listGestureRef.current
+  if (!gesture || gesture.pointerId !== event.pointerId) return
+
+  if (gesture.timer) clearTimeout(gesture.timer)
+
+  if (gesture.dragging) suppressClickRef.current = true
+
+  listGestureRef.current = null
+  setDragCategoryId(null)
+  setDragPageId(null)
+}
+
   const updateActivePage = (update: Partial<NotePage>) => {
     if (!activePage) return
     setNotebook(previous => ({
@@ -1219,36 +1329,38 @@ const finishListDrag = () => {
           <button type="button" onClick={renameCategory}>名前変更</button>
           <button type="button" onClick={deleteCategory}>削除</button>
         </div>
-        <div className="category-list" onPointerUp={() => setDragCategoryId(null)} onPointerCancel={() => setDragCategoryId(null)}>
-          {notebook.categories.map(category => <button
-  key={category.id}
-  data-category-id={category.id}
-  type="button"
-  onPointerDown={startListDrag}
-  onPointerMove={event =>
-    updateListDrag(event, () => setDragCategoryId(category.id))
-  }
-  onPointerEnter={() => {
-    if (dragMovedRef.current && dragCategoryId && dragCategoryId !== category.id) {
-      reorderCategories(dragCategoryId, category.id)
-      setDragCategoryId(category.id)
-    }
-  }}
-  onPointerUp={finishListDrag}
-  onPointerCancel={finishListDrag}
-  onClick={() => {
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false
-      return
-    }
-    changeCategory(category)
-  }}
-  className={`${category.id === activeCategory?.id ? 'category-button selected' : 'category-button'} ${dragCategoryId === category.id ? 'dragging' : ''}`}
+        <div
+  className="category-list"
+  onPointerMove={moveListGesture}
+  onPointerUp={finishListGesture}
+  onPointerCancel={finishListGesture}
 >
-  <span className="category-symbol">▤</span>
-  <span className="category-name">{category.name}</span>
-  <span className="item-count">{category.pages.length}</span>
-</button>)}
+          {notebook.categories.map(category => (
+  <button
+    key={category.id}
+    data-category-id={category.id}
+    type="button"
+    onPointerDown={event =>
+      startListGesture(event, 'category', category.id)
+    }
+    onClick={() => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false
+        return
+      }
+      changeCategory(category)
+    }}
+    className={`${
+      category.id === activeCategory?.id
+        ? 'category-button selected'
+        : 'category-button'
+    } ${dragCategoryId === category.id ? 'dragging' : ''}`}
+  >
+    <span className="category-symbol">▤</span>
+    <span className="category-name">{category.name}</span>
+    <span className="item-count">{category.pages.length}</span>
+  </button>
+))}
         </div>
         <div className="sidebar-bottom">
           <div className="notebook-paper-size-setting">
@@ -1314,23 +1426,66 @@ const finishListDrag = () => {
       {showPages && <aside className="sidebar pages-sidebar">
         <div className="sidebar-heading"><div><span className="eyebrow">PAGES</span><h2>ページ一覧</h2></div><button className="round-button" type="button" onClick={addPage} title="ページ追加">＋</button></div>
         <div className="page-sidebar-actions"><button type="button" onClick={renamePage}>名前変更</button><button type="button" onClick={deletePage}>削除</button></div>
-        <div className="page-list-scroll" onPointerUp={() => setDragPageId(null)} onPointerCancel={() => setDragPageId(null)}>
-          {activeCategory?.pages.map((page, index) => <button key={page.id} data-page-id={page.id} type="button" onPointerDown={() => setDragPageId(page.id)} onPointerEnter={() => { if (dragPageId && dragPageId !== page.id) reorderPages(dragPageId, page.id) }} onPointerUp={() => setDragPageId(null)} className={`${page.id === activePage?.id ? 'page-preview selected' : 'page-preview'} ${dragPageId === page.id ? 'dragging' : ''}`} onClick={() => changePage(page)}>
-            <span className="preview-number">{String(index + 1).padStart(2, '0')}</span>
-            <span
-              className="preview-paper"
-              style={{
-                aspectRatio: `${paperDimensions.width} / ${paperDimensions.height}`,
-              }}
-            >
-              <span className={`preview-paper-background paper-${page.paper ?? notebook.defaultPaper}`} />
-              {page.image && (
-                <img src={page.image} alt="" draggable={false} />
-              )}
-            </span>
-            <span className="preview-caption"><strong>{page.name}</strong><small>{paperOptions.find(option => option.value === (page.paper ?? notebook.defaultPaper))?.label}</small></span>
-            {page.id === activePage?.id && <span className="selected-check">✓</span>}
-          </button>)}
+        <div
+  className="page-list-scroll"
+  onPointerMove={moveListGesture}
+  onPointerUp={finishListGesture}
+  onPointerCancel={finishListGesture}
+>
+          {activeCategory?.pages.map((page, index) => (
+  <button
+    key={page.id}
+    data-page-id={page.id}
+    type="button"
+    onPointerDown={event =>
+      startListGesture(event, 'page', page.id)
+    }
+    onClick={() => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false
+        return
+      }
+      changePage(page)
+    }}
+    className={`${
+      page.id === activePage?.id
+        ? 'page-preview selected'
+        : 'page-preview'
+    } ${dragPageId === page.id ? 'dragging' : ''}`}
+  >
+    <span className="preview-number">
+      {String(index + 1).padStart(2, '0')}
+    </span>
+
+    <span
+      className="preview-paper"
+      style={{
+        aspectRatio: `${paperDimensions.width} / ${paperDimensions.height}`,
+      }}
+    >
+      <span
+        className={`preview-paper-background paper-${page.paper ?? notebook.defaultPaper}`}
+      />
+      {page.image && (
+        <img src={page.image} alt="" draggable={false} />
+      )}
+    </span>
+
+    <span className="preview-caption">
+      <strong>{page.name}</strong>
+      <small>
+        {paperOptions.find(
+          option =>
+            option.value === (page.paper ?? notebook.defaultPaper)
+        )?.label}
+      </small>
+    </span>
+
+    {page.id === activePage?.id && (
+      <span className="selected-check">✓</span>
+    )}
+  </button>
+))}
         </div>
         <div className="sidebar-bottom page-count">{activeCategory?.pages.length ?? 0} ページ</div>
       </aside>}

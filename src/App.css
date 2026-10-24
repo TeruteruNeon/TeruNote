@@ -292,12 +292,20 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .paper-stage.pan-tool-active .drawing-canvas { cursor: grab; }
 .drawing-canvas.pan-mode { pointer-events: none; }
 
-/* カテゴリ・ページ一覧では文字選択を無効にする */
+
+/* カテゴリ・ページ一覧の文字や画像を選択させない */
 .category-list,
 .category-list *,
 .page-list-scroll,
 .page-list-scroll * {
   user-select: none;
   -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* 一覧内の画像をドラッグ対象にしない */
+.category-list img,
+.page-list-scroll img {
+  pointer-events: none;
   -webkit-user-drag: none;
 }
