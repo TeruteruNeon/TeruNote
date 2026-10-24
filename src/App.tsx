@@ -235,8 +235,8 @@ function PageCanvas({
     const rect = event.currentTarget.getBoundingClientRect()
     return { x: (event.clientX - rect.left) / zoom, y: (event.clientY - rect.top) / zoom }
   }
-  
-  
+
+
   const startDrawing = (event: PointerEvent<HTMLCanvasElement>) => {
     if (tool === 'pan' || isPinchingRef.current) return
     if (event.pointerType === 'mouse' && event.button !== 0) return
@@ -482,11 +482,11 @@ function App() {
   const paperStageRef = useRef<HTMLDivElement>(null)
   const isPinchingRef = useRef(false)
 
-const touchPointersRef = useRef(
-  new Map<number, { x: number; y: number }>()
-)
+  const touchPointersRef = useRef(
+    new Map<number, { x: number; y: number }>()
+  )
 
-const pinchDistanceRef = useRef(0)
+  const pinchDistanceRef = useRef(0)
   const panDragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null)
   const [color, setColor] = useState('#202020')
   const [size, setSize] = useState(3)
@@ -707,74 +707,75 @@ const pinchDistanceRef = useRef(0)
     changeZoomAt(event.clientX, event.clientY, event.deltaY)
   }
   const handleStagePointerDownCapture = (
-  event: PointerEvent<HTMLDivElement>
-) => {
-  if (event.pointerType !== 'touch') return
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (event.pointerType !== 'touch') return
 
-  touchPointersRef.current.set(event.pointerId, {
-    x: event.clientX,
-    y: event.clientY,
-  })
+    touchPointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    })
 
-  if (touchPointersRef.current.size === 2) {
-    isPinchingRef.current = true
+    if (touchPointersRef.current.size === 2) {
+      isPinchingRef.current = true
+
+      const points = [...touchPointersRef.current.values()]
+      pinchDistanceRef.current = Math.hypot(
+        points[1].x - points[0].x,
+        points[1].y - points[0].y
+      )
+    }
+  }
+
+  const handleStagePointerMoveCapture = (
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (!touchPointersRef.current.has(event.pointerId)) return
+
+    touchPointersRef.current.set(event.pointerId, {
+      x: event.clientX,
+      y: event.clientY,
+    })
+
+    if (touchPointersRef.current.size !== 2) return
 
     const points = [...touchPointersRef.current.values()]
-    pinchDistanceRef.current = Math.hypot(
+    const distance = Math.hypot(
       points[1].x - points[0].x,
       points[1].y - points[0].y
     )
+
+    const previousDistance = pinchDistanceRef.current
+    pinchDistanceRef.current = distance
+
+    if (previousDistance > 0 && distance > 0) {
+      const stage = paperStageRef.current
+      if (!stage) return
+
+      const centerX = (points[0].x + points[1].x) / 2
+      const centerY = (points[0].y + points[1].y) / 2
+
+      changeZoomAt(
+        centerX,
+        centerY,
+        -Math.log(distance / previousDistance) / 0.002
+      )
+    }
   }
-}
 
-const handleStagePointerMoveCapture = (
-  event: PointerEvent<HTMLDivElement>
-) => {
-  if (!touchPointersRef.current.has(event.pointerId)) return
+  const handleStagePointerUpCapture = (
+    event: PointerEvent<HTMLDivElement>
+  ) => {
+    if (event.pointerType !== 'touch') return
 
-  touchPointersRef.current.set(event.pointerId, {
-    x: event.clientX,
-    y: event.clientY,
-  })
+    touchPointersRef.current.delete(event.pointerId)
 
-  if (touchPointersRef.current.size !== 2) return
-
-  const points = [...touchPointersRef.current.values()]
-  const distance = Math.hypot(
-    points[1].x - points[0].x,
-    points[1].y - points[0].y
-  )
-
-  const previousDistance = pinchDistanceRef.current
-  pinchDistanceRef.current = distance
-
-  if (previousDistance > 0 && distance > 0) {
-    const stage = paperStageRef.current
-    if (!stage) return
-
-    const centerX = (points[0].x + points[1].x) / 2
-    const centerY = (points[0].y + points[1].y) / 2
-
-    changeZoomAt(
-      centerX,
-      centerY,
-      -Math.log(distance / previousDistance) / 0.002
-    )
+    // 指が2本未満になったら、ピンチ操作を終了する
+    if (touchPointersRef.current.size < 2) {
+      isPinchingRef.current = false
+      pinchDistanceRef.current = 0
+    }
   }
-}
-
-const handleStagePointerUpCapture = (
-  event: PointerEvent<HTMLDivElement>
-) => {
-  if (event.pointerType !== 'touch') return
-
-  touchPointersRef.current.delete(event.pointerId)
-
-  if (touchPointersRef.current.size === 0) {
-    isPinchingRef.current = false
-    pinchDistanceRef.current = 0
-  }
-}
   const startPan = (event: PointerEvent<HTMLDivElement>) => {
     if (tool !== 'pan' || (event.pointerType === 'mouse' && event.button !== 0)) return
     const stage = paperStageRef.current
@@ -792,32 +793,32 @@ const handleStagePointerUpCapture = (
     stage.scrollTop = drag.scrollTop - (event.clientY - drag.y)
   }
   const stopPan = (event: PointerEvent<HTMLDivElement>) => {
-  if (panDragRef.current?.pointerId !== event.pointerId) return
-
-  panDragRef.current = null
-
-  const stage = paperStageRef.current
-  if (stage?.hasPointerCapture(event.pointerId)) {
-    stage.releasePointerCapture(event.pointerId)
-  }
-}
-
-// 移動ツールを解除したとき、ドラッグ状態をリセットする
-useEffect(() => {
-  if (tool !== 'pan') {
-    const stage = paperStageRef.current
-
-    if (stage && panDragRef.current) {
-      const pointerId = panDragRef.current.pointerId
-
-      if (stage.hasPointerCapture(pointerId)) {
-        stage.releasePointerCapture(pointerId)
-      }
-    }
+    if (panDragRef.current?.pointerId !== event.pointerId) return
 
     panDragRef.current = null
+
+    const stage = paperStageRef.current
+    if (stage?.hasPointerCapture(event.pointerId)) {
+      stage.releasePointerCapture(event.pointerId)
+    }
   }
-}, [tool])
+
+  // 移動ツールを解除したとき、ドラッグ状態をリセットする
+  useEffect(() => {
+    if (tool !== 'pan') {
+      const stage = paperStageRef.current
+
+      if (stage && panDragRef.current) {
+        const pointerId = panDragRef.current.pointerId
+
+        if (stage.hasPointerCapture(pointerId)) {
+          stage.releasePointerCapture(pointerId)
+        }
+      }
+
+      panDragRef.current = null
+    }
+  }, [tool])
 
   const exportPdf = async () => {
     try {
@@ -1141,8 +1142,9 @@ useEffect(() => {
           onPointerUp={stopPan}
           onPointerCancel={stopPan}
           onPointerDownCapture={handleStagePointerDownCapture}
-onPointerMoveCapture={handleStagePointerMoveCapture}
-onPointerUpCapture={handleStagePointerUpCapture}
+          onPointerMoveCapture={handleStagePointerMoveCapture}
+          onPointerUpCapture={handleStagePointerUpCapture}
+          onPointerCancelCapture={handleStagePointerUpCapture}
         >
           {activePage ? <div className="paper-zoom-wrapper" style={{ width: `${(paperDimensions.width + 2) * zoom}px`, height: `${(paperDimensions.height + 40) * zoom}px` }}>
             <article className="paper active-paper" style={{ width: `${paperDimensions.width}px`, maxWidth: 'none', marginInline: 'auto', transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
