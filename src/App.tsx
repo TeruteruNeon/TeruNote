@@ -142,7 +142,8 @@ function PageCanvas({
   const drawingRef = useRef(false)
   const lastPointRef = useRef({ x: 0, y: 0 })
   const strokePointsRef = useRef<Array<{ x: number; y: number }>>([])
-  const strokeBaseRef = useRef<ImageData | null>(null)
+  const strokeBaseRef = useRef<HTMLCanvasElement | null>(null)
+  const drawFrameRef = useRef<number | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -234,22 +235,39 @@ function PageCanvas({
     const rect = event.currentTarget.getBoundingClientRect()
     return { x: (event.clientX - rect.left) / zoom, y: (event.clientY - rect.top) / zoom }
   }
+  
+  
   const startDrawing = (event: PointerEvent<HTMLCanvasElement>) => {
-  if (tool === 'pan' || isPinchingRef.current) return
-  if (event.pointerType === 'mouse' && event.button !== 0) return
+    if (tool === 'pan' || isPinchingRef.current) return
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+
     event.preventDefault()
+
     const canvas = event.currentTarget
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+
     canvas.setPointerCapture(event.pointerId)
     drawingRef.current = true
+
     const p = point(event)
     lastPointRef.current = p
     strokePointsRef.current = [p]
-    // Keep the canvas as it was before this stroke. Each preview redraws the
-    // whole stroke over this snapshot, so opacity is applied once per stroke.
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    strokeBaseRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
+    // 描画開始時のキャンバスを別のキャンバスに一度だけコピー
+    const baseCanvas = document.createElement('canvas')
+    baseCanvas.width = canvas.width
+    baseCanvas.height = canvas.height
+
+    const baseCtx = baseCanvas.getContext('2d')
+    if (!baseCtx) {
+      drawingRef.current = false
+      return
+    }
+
+    baseCtx.drawImage(canvas, 0, 0)
+    strokeBaseRef.current = baseCanvas
+
     drawStrokePreview(canvas)
   }
 
@@ -257,47 +275,63 @@ function PageCanvas({
     const ctx = canvas.getContext('2d')
     const base = strokeBaseRef.current
     if (!ctx || !base) return
+
+    // ImageDataの読み書きではなく、キャンバス画像を復元する
     ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.putImageData(base, 0, 0)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(base, 0, 0)
+
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
     ctx.beginPath()
     const points = strokePointsRef.current
+
     if (points.length === 1) {
-      // A short round line makes a click create a dot.
       ctx.moveTo(points[0].x, points[0].y)
       ctx.lineTo(points[0].x + 0.01, points[0].y + 0.01)
     } else {
       ctx.moveTo(points[0].x, points[0].y)
+
       for (let i = 1; i < points.length - 1; i++) {
         const midX = (points[i].x + points[i + 1].x) / 2
         const midY = (points[i].y + points[i + 1].y) / 2
         ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY)
       }
+
       const last = points[points.length - 1]
       ctx.lineTo(last.x, last.y)
     }
+
     ctx.lineWidth = size
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
     ctx.strokeStyle = color
-    ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over'
+    ctx.globalCompositeOperation =
+      tool === 'eraser' ? 'destination-out' : 'source-over'
     ctx.globalAlpha = tool === 'eraser' ? 1 : opacity / 100
     ctx.stroke()
+
     ctx.globalCompositeOperation = 'source-over'
     ctx.globalAlpha = 1
   }
 
- 
   const draw = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (isPinchingRef.current) {
-      const canvas = event.currentTarget
-      const ctx = canvas.getContext('2d')
+    const canvas = event.currentTarget
 
-      // ピンチ開始前の状態に戻し、線を残さない
-      if (drawingRef.current && ctx && strokeBaseRef.current) {
+    if (isPinchingRef.current) {
+      if (drawFrameRef.current !== null) {
+        cancelAnimationFrame(drawFrameRef.current)
+        drawFrameRef.current = null
+      }
+
+      const ctx = canvas.getContext('2d')
+      const base = strokeBaseRef.current
+
+      if (drawingRef.current && ctx && base) {
         ctx.setTransform(1, 0, 0, 1, 0, 0)
-        ctx.putImageData(strokeBaseRef.current, 0, 0)
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(base, 0, 0)
       }
 
       drawingRef.current = false
@@ -311,26 +345,52 @@ function PageCanvas({
     const p = point(event)
     lastPointRef.current = p
     strokePointsRef.current.push(p)
-    drawStrokePreview(event.currentTarget)
+
+    // 1フレームに最大1回だけ描画する
+    if (drawFrameRef.current === null) {
+      drawFrameRef.current = requestAnimationFrame(() => {
+        drawFrameRef.current = null
+        if (drawingRef.current && !isPinchingRef.current) {
+          drawStrokePreview(canvas)
+        }
+      })
+    }
   }
 
   const stopDrawing = (event: PointerEvent<HTMLCanvasElement>) => {
+    const canvas = event.currentTarget
+
+    if (drawFrameRef.current !== null) {
+      cancelAnimationFrame(drawFrameRef.current)
+      drawFrameRef.current = null
+    }
+
     if (isPinchingRef.current) {
+      const ctx = canvas.getContext('2d')
+      const base = strokeBaseRef.current
+
+      if (ctx && base) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(base, 0, 0)
+      }
+
       drawingRef.current = false
       strokeBaseRef.current = null
       strokePointsRef.current = []
 
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId)
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId)
       }
       return
     }
 
     if (!drawingRef.current) return
 
+    // 最後の点まで描画してから保存
+    drawStrokePreview(canvas)
     drawingRef.current = false
 
-    const canvas = event.currentTarget
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId)
     }
@@ -338,6 +398,7 @@ function PageCanvas({
     strokeBaseRef.current = null
     onImageChange(canvas.toDataURL('image/png'))
   }
+
 
   return (
     <div
