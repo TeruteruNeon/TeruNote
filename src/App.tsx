@@ -3,6 +3,7 @@ import { jsPDF } from 'jspdf'
 import {
   isTauriApp,
   saveTextFile,
+  saveTextFileToCurrent,
   saveBytesFile,
   openTextFile,
   readExistingTextFile,
@@ -693,43 +694,37 @@ function App() {
       window.alert('保存に失敗しました。')
     }
   }
-  
   const saveNotebook = async () => {
     try {
       const content = JSON.stringify(createRNoteFile(notebook))
 
       if (isTauriApp()) {
-        // Windowsアプリ版：既存ファイルに上書き
         if (!currentFilePath) {
           await saveNotebookAs()
           return
         }
 
         await writeQueueRef.current.catch(() => undefined)
+
         await writeExistingTextFile(currentFilePath, content)
         setSaveStatus('保存済み')
         return
       }
 
-      // ブラウザ版：毎回JSONファイルをダウンロード
-      const result = await saveTextFile(
-        content,
-        'TeruNote.rnote',
-        'TeruNote',
-        'rnote',
-        true,
-      )
+      const saved = await saveTextFileToCurrent(content)
 
-      if (result.saved) {
-        setSaveStatus('保存済み')
+      if (!saved) {
+        await saveNotebookAs()
+        return
       }
+
+      setSaveStatus('保存済み')
     } catch (error) {
       console.error('保存エラー:', error)
       setSaveStatus('保存失敗')
       window.alert('保存に失敗しました。')
     }
   }
-
   const openNotebook = async () => {
     try {
       const selected = await openTextFile('TeruNote', 'rnote')
