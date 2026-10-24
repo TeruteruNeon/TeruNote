@@ -3,7 +3,6 @@ import { jsPDF } from 'jspdf'
 import {
   isTauriApp,
   saveTextFile,
-  saveTextFileToCurrent,
   saveBytesFile,
   openTextFile,
   readExistingTextFile,
