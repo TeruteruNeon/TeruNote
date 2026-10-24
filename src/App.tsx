@@ -487,6 +487,7 @@ function App() {
   )
 
   const pinchDistanceRef = useRef(0)
+  const pinchCenterRef = useRef({ x: 0, y: 0 })
   const panDragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null)
   const [color, setColor] = useState('#202020')
   const [size, setSize] = useState(3)
@@ -707,62 +708,82 @@ function App() {
     changeZoomAt(event.clientX, event.clientY, event.deltaY)
   }
   const handleStagePointerDownCapture = (
-    event: PointerEvent<HTMLDivElement>
-  ) => {
-    if (event.pointerType !== 'touch') return
+  event: PointerEvent<HTMLDivElement>
+) => {
+  if (event.pointerType !== 'touch') return
 
-    touchPointersRef.current.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY,
-    })
+  touchPointersRef.current.set(event.pointerId, {
+    x: event.clientX,
+    y: event.clientY,
+  })
 
-    if (touchPointersRef.current.size === 2) {
-      isPinchingRef.current = true
-
-      const points = [...touchPointersRef.current.values()]
-      pinchDistanceRef.current = Math.hypot(
-        points[1].x - points[0].x,
-        points[1].y - points[0].y
-      )
-    }
-  }
-
-  const handleStagePointerMoveCapture = (
-    event: PointerEvent<HTMLDivElement>
-  ) => {
-    if (!touchPointersRef.current.has(event.pointerId)) return
-
-    touchPointersRef.current.set(event.pointerId, {
-      x: event.clientX,
-      y: event.clientY,
-    })
-
-    if (touchPointersRef.current.size !== 2) return
+  if (touchPointersRef.current.size === 2) {
+    isPinchingRef.current = true
 
     const points = [...touchPointersRef.current.values()]
-    const distance = Math.hypot(
+
+    pinchDistanceRef.current = Math.hypot(
       points[1].x - points[0].x,
       points[1].y - points[0].y
     )
 
-    const previousDistance = pinchDistanceRef.current
-    pinchDistanceRef.current = distance
-
-    if (previousDistance > 0 && distance > 0) {
-      const stage = paperStageRef.current
-      if (!stage) return
-
-      const centerX = (points[0].x + points[1].x) / 2
-      const centerY = (points[0].y + points[1].y) / 2
-
-      changeZoomAt(
-        centerX,
-        centerY,
-        -Math.log(distance / previousDistance) / 0.002
-      )
+    pinchCenterRef.current = {
+      x: (points[0].x + points[1].x) / 2,
+      y: (points[0].y + points[1].y) / 2,
     }
   }
+}
 
+  const handleStagePointerMoveCapture = (
+  event: PointerEvent<HTMLDivElement>
+) => {
+  if (!touchPointersRef.current.has(event.pointerId)) return
+
+  touchPointersRef.current.set(event.pointerId, {
+    x: event.clientX,
+    y: event.clientY,
+  })
+
+  if (touchPointersRef.current.size !== 2) return
+
+  const points = [...touchPointersRef.current.values()]
+
+  const distance = Math.hypot(
+    points[1].x - points[0].x,
+    points[1].y - points[0].y
+  )
+
+  const centerX = (points[0].x + points[1].x) / 2
+  const centerY = (points[0].y + points[1].y) / 2
+
+  const previousDistance = pinchDistanceRef.current
+  const previousCenter = pinchCenterRef.current
+
+  // 2本指の中心が移動した分だけ紙を動かす
+  const stage = paperStageRef.current
+
+  if (stage) {
+    stage.scrollLeft -= centerX - previousCenter.x
+    stage.scrollTop -= centerY - previousCenter.y
+  }
+
+  // 次の移動量を計算するために中心位置を保存
+  pinchCenterRef.current = {
+    x: centerX,
+    y: centerY,
+  }
+
+  pinchDistanceRef.current = distance
+
+  // 2本指の距離が変わったときだけズームする
+  if (previousDistance > 0 && distance > 0) {
+    changeZoomAt(
+      centerX,
+      centerY,
+      -Math.log(distance / previousDistance) / 0.002
+    )
+  }
+}
   const handleStagePointerUpCapture = (
     event: PointerEvent<HTMLDivElement>
   ) => {
