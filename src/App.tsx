@@ -792,11 +792,32 @@ const handleStagePointerUpCapture = (
     stage.scrollTop = drag.scrollTop - (event.clientY - drag.y)
   }
   const stopPan = (event: PointerEvent<HTMLDivElement>) => {
-    if (panDragRef.current?.pointerId !== event.pointerId) return
-    panDragRef.current = null
-    const stage = paperStageRef.current
-    if (stage?.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId)
+  if (panDragRef.current?.pointerId !== event.pointerId) return
+
+  panDragRef.current = null
+
+  const stage = paperStageRef.current
+  if (stage?.hasPointerCapture(event.pointerId)) {
+    stage.releasePointerCapture(event.pointerId)
   }
+}
+
+// 移動ツールを解除したとき、ドラッグ状態をリセットする
+useEffect(() => {
+  if (tool !== 'pan') {
+    const stage = paperStageRef.current
+
+    if (stage && panDragRef.current) {
+      const pointerId = panDragRef.current.pointerId
+
+      if (stage.hasPointerCapture(pointerId)) {
+        stage.releasePointerCapture(pointerId)
+      }
+    }
+
+    panDragRef.current = null
+  }
+}, [tool])
 
   const exportPdf = async () => {
     try {
