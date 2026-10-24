@@ -159,7 +159,7 @@ function PageCanvas({
       const displayHeight = canvas.clientHeight
       if (!displayWidth || !displayHeight) return
 
-      const dpr = window.devicePixelRatio || 1
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
       const width = Math.round(displayWidth * dpr)
       const height = Math.round(displayHeight * dpr)
 
@@ -259,7 +259,7 @@ function PageCanvas({
     if (!ctx || !base) return
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.putImageData(base, 0, 0)
-    const dpr = window.devicePixelRatio || 1
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.beginPath()
     const points = strokePointsRef.current
