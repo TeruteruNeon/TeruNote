@@ -508,6 +508,7 @@ const listGestureRef = useRef<{
   kind: 'category' | 'page'
   pointerId: number
   sourceId: string
+  targetId: string | null
   startY: number
   lastY: number
   startX: number
@@ -669,17 +670,18 @@ const MOVE_THRESHOLD = 8
     if (!list) return
 
     listGestureRef.current = {
-      kind,
-      pointerId: event.pointerId,
-      sourceId: id,
-      startY: event.clientY,
-      lastY: event.clientY,
-      startX: event.clientX,
-      timer: null,
-      dragging: true,
-      scrolling: false,
-      list,
-    }
+  kind,
+  pointerId: event.pointerId,
+  sourceId: id,
+  targetId: null,
+  startY: event.clientY,
+  lastY: event.clientY,
+  startX: event.clientX,
+  timer: null,
+  dragging: true,
+  scrolling: false,
+  list,
+}
 
     suppressClickRef.current = false
 
@@ -695,17 +697,18 @@ const MOVE_THRESHOLD = 8
   if (!list) return
 
   const gesture = {
-    kind,
-    pointerId: event.pointerId,
-    sourceId: id,
-    startY: event.clientY,
-    lastY: event.clientY,
-    startX: event.clientX,
-    timer: null as ReturnType<typeof setTimeout> | null,
-    dragging: false,
-    scrolling: false,
-    list,
-  }
+  kind,
+  pointerId: event.pointerId,
+  sourceId: id,
+  targetId: null,
+  startY: event.clientY,
+  lastY: event.clientY,
+  startX: event.clientX,
+  timer: null as ReturnType<typeof setTimeout> | null,
+  dragging: false,
+  scrolling: false,
+  list,
+}
 
   if (listGestureRef.current?.timer) {
     clearTimeout(listGestureRef.current.timer)
@@ -743,47 +746,77 @@ const moveListGesture = (event: PointerEvent<HTMLDivElement>) => {
       gesture.timer = null
       gesture.scrolling = true
 
-      // 長押し前のスワイプはスクロール
       gesture.list.scrollTop -= event.clientY - gesture.lastY
     }
   } else if (gesture.dragging) {
-    const element = document.elementFromPoint(event.clientX, event.clientY)
+    const element = document.elementFromPoint(
+      event.clientX,
+      event.clientY,
+    )
+
     const target = element?.closest<HTMLButtonElement>(
       gesture.kind === 'category'
-        ? '[data-category-id]'
-        : '[data-page-id]',
+        ? 'button[data-category-id]'
+        : 'button[data-page-id]',
     )
 
     const targetId = target?.dataset[
       gesture.kind === 'category' ? 'categoryId' : 'pageId'
     ]
 
-    if (targetId && targetId !== gesture.sourceId) {
-      if (gesture.kind === 'category') {
-        reorderCategories(gesture.sourceId, targetId)
-        setDragCategoryId(targetId)
-      } else {
-        reorderPages(gesture.sourceId, targetId)
-        setDragPageId(targetId)
-      }
+    // 移動先だけを記録し、指やマウスを離したときに並び替える
+    gesture.targetId =
+      targetId && targetId !== gesture.sourceId
+        ? targetId
+        : null
 
-      gesture.sourceId = targetId
+    if (event.pointerType === 'touch') {
+      event.preventDefault()
     }
   }
 
   gesture.lastY = event.clientY
-  if (gesture.dragging && event.pointerType === 'touch') {
-    event.preventDefault()
-  }
 }
 
 const finishListGesture = (event: PointerEvent<HTMLDivElement>) => {
   const gesture = listGestureRef.current
+
   if (!gesture || gesture.pointerId !== event.pointerId) return
 
   if (gesture.timer) clearTimeout(gesture.timer)
 
-  if (gesture.dragging) suppressClickRef.current = true
+  if (gesture.dragging) {
+    const element = document.elementFromPoint(
+      event.clientX,
+      event.clientY,
+    )
+
+    const target = element?.closest<HTMLButtonElement>(
+      gesture.kind === 'category'
+        ? 'button[data-category-id]'
+        : 'button[data-page-id]',
+    )
+
+    const targetId = target?.dataset[
+      gesture.kind === 'category' ? 'categoryId' : 'pageId'
+    ]
+
+    // 最後に触れているボタンを優先する
+    const finalTargetId =
+      targetId && targetId !== gesture.sourceId
+        ? targetId
+        : gesture.targetId
+
+    if (finalTargetId) {
+      if (gesture.kind === 'category') {
+        reorderCategories(gesture.sourceId, finalTargetId)
+      } else {
+        reorderPages(gesture.sourceId, finalTargetId)
+      }
+    }
+
+    suppressClickRef.current = true
+  }
 
   listGestureRef.current = null
   setDragCategoryId(null)
