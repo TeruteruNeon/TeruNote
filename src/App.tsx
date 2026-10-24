@@ -118,6 +118,7 @@ type PageCanvasProps = {
   zoom: number
   onImageChange: (image: string) => void
   restoreVersion: number
+  isPinchingRef: React.MutableRefObject<boolean>
 }
 
 // Each page owns its own canvas, so scrolling does not replace another page's drawing.
@@ -133,6 +134,7 @@ function PageCanvas({
   zoom,
   onImageChange,
   restoreVersion,
+  isPinchingRef,
 }: PageCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const lastOwnImageRef = useRef<string | null>(null)
@@ -233,8 +235,8 @@ function PageCanvas({
     return { x: (event.clientX - rect.left) / zoom, y: (event.clientY - rect.top) / zoom }
   }
   const startDrawing = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (tool === 'pan') return
-    if (event.pointerType === 'mouse' && event.button !== 0) return
+  if (tool === 'pan' || isPinchingRef.current) return
+  if (event.pointerType === 'mouse' && event.button !== 0) return
     event.preventDefault()
     const canvas = event.currentTarget
     const ctx = canvas.getContext('2d')
@@ -286,35 +288,79 @@ function PageCanvas({
     ctx.globalAlpha = 1
   }
 
+ 
   const draw = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (tool === 'pan' || !drawingRef.current) return
-    event.preventDefault()
-    const p = point(event)
-    const last = lastPointRef.current
-    // Ignore duplicate pointer events, which can otherwise exaggerate dots.
-    if (p.x !== last.x || p.y !== last.y) {
-      strokePointsRef.current.push(p)
-      lastPointRef.current = p
-      drawStrokePreview(event.currentTarget)
+    if (isPinchingRef.current) {
+      const canvas = event.currentTarget
+      const ctx = canvas.getContext('2d')
+
+      // ピンチ開始前の状態に戻し、線を残さない
+      if (drawingRef.current && ctx && strokeBaseRef.current) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.putImageData(strokeBaseRef.current, 0, 0)
+      }
+
+      drawingRef.current = false
+      strokeBaseRef.current = null
+      strokePointsRef.current = []
+      return
     }
+
+    if (tool === 'pan' || !drawingRef.current) return
+
+    const p = point(event)
+    lastPointRef.current = p
+    strokePointsRef.current.push(p)
+    drawStrokePreview(event.currentTarget)
   }
 
   const stopDrawing = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (isPinchingRef.current) {
+      drawingRef.current = false
+      strokeBaseRef.current = null
+      strokePointsRef.current = []
+
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      return
+    }
+
     if (!drawingRef.current) return
+
     drawingRef.current = false
+
     const canvas = event.currentTarget
-    if (strokeBaseRef.current) drawStrokePreview(canvas)
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId)
+    }
+
     strokeBaseRef.current = null
-    strokePointsRef.current = []
-    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
-    const image = canvas.toDataURL('image/png')
-    lastOwnImageRef.current = image
-    onImageChange(image)
+    onImageChange(canvas.toDataURL('image/png'))
   }
-  return <div className={`writing-area paper-${paper}`} style={{ width: `${paperWidth}px`, height: `${paperHeight}px`, aspectRatio: 'auto' }}>
-    <canvas ref={canvasRef} className={`drawing-canvas ${tool === 'pan' ? 'pan-mode' : ''}`} onPointerDown={startDrawing} onPointerMove={draw} onPointerUp={stopDrawing} onPointerCancel={stopDrawing} />
-  </div>
+
+  return (
+    <div
+      className={`writing-area paper-${paper}`}
+      style={{
+        width: `${paperWidth}px`,
+        height: `${paperHeight}px`,
+        aspectRatio: 'auto',
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        className={`drawing-canvas ${tool === 'pan' ? 'pan-mode' : ''}`}
+        onPointerDown={startDrawing}
+        onPointerMove={draw}
+        onPointerUp={stopDrawing}
+        onPointerCancel={stopDrawing}
+      />
+    </div>
+  )
 }
+
+
 
 
 function paperSizeMm(notebook: Notebook) {
@@ -373,6 +419,13 @@ function App() {
   const [tool, setTool] = useState<Tool>('pen')
   const [zoom, setZoom] = useState(0.5)
   const paperStageRef = useRef<HTMLDivElement>(null)
+  const isPinchingRef = useRef(false)
+
+const touchPointersRef = useRef(
+  new Map<number, { x: number; y: number }>()
+)
+
+const pinchDistanceRef = useRef(0)
   const panDragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null)
   const [color, setColor] = useState('#202020')
   const [size, setSize] = useState(3)
@@ -592,6 +645,75 @@ function App() {
     event.preventDefault()
     changeZoomAt(event.clientX, event.clientY, event.deltaY)
   }
+  const handleStagePointerDownCapture = (
+  event: PointerEvent<HTMLDivElement>
+) => {
+  if (event.pointerType !== 'touch') return
+
+  touchPointersRef.current.set(event.pointerId, {
+    x: event.clientX,
+    y: event.clientY,
+  })
+
+  if (touchPointersRef.current.size === 2) {
+    isPinchingRef.current = true
+
+    const points = [...touchPointersRef.current.values()]
+    pinchDistanceRef.current = Math.hypot(
+      points[1].x - points[0].x,
+      points[1].y - points[0].y
+    )
+  }
+}
+
+const handleStagePointerMoveCapture = (
+  event: PointerEvent<HTMLDivElement>
+) => {
+  if (!touchPointersRef.current.has(event.pointerId)) return
+
+  touchPointersRef.current.set(event.pointerId, {
+    x: event.clientX,
+    y: event.clientY,
+  })
+
+  if (touchPointersRef.current.size !== 2) return
+
+  const points = [...touchPointersRef.current.values()]
+  const distance = Math.hypot(
+    points[1].x - points[0].x,
+    points[1].y - points[0].y
+  )
+
+  const previousDistance = pinchDistanceRef.current
+  pinchDistanceRef.current = distance
+
+  if (previousDistance > 0 && distance > 0) {
+    const stage = paperStageRef.current
+    if (!stage) return
+
+    const centerX = (points[0].x + points[1].x) / 2
+    const centerY = (points[0].y + points[1].y) / 2
+
+    changeZoomAt(
+      centerX,
+      centerY,
+      -Math.log(distance / previousDistance) / 0.002
+    )
+  }
+}
+
+const handleStagePointerUpCapture = (
+  event: PointerEvent<HTMLDivElement>
+) => {
+  if (event.pointerType !== 'touch') return
+
+  touchPointersRef.current.delete(event.pointerId)
+
+  if (touchPointersRef.current.size === 0) {
+    isPinchingRef.current = false
+    pinchDistanceRef.current = 0
+  }
+}
   const startPan = (event: PointerEvent<HTMLDivElement>) => {
     if (tool !== 'pan' || (event.pointerType === 'mouse' && event.button !== 0)) return
     const stage = paperStageRef.current
@@ -936,6 +1058,9 @@ function App() {
           onPointerMove={movePan}
           onPointerUp={stopPan}
           onPointerCancel={stopPan}
+          onPointerDownCapture={handleStagePointerDownCapture}
+onPointerMoveCapture={handleStagePointerMoveCapture}
+onPointerUpCapture={handleStagePointerUpCapture}
         >
           {activePage ? <div className="paper-zoom-wrapper" style={{ width: `${(paperDimensions.width + 2) * zoom}px`, height: `${(paperDimensions.height + 40) * zoom}px` }}>
             <article className="paper active-paper" style={{ width: `${paperDimensions.width}px`, maxWidth: 'none', marginInline: 'auto', transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
@@ -952,6 +1077,7 @@ function App() {
                 zoom={zoom}
                 restoreVersion={restoreVersion}
                 onImageChange={image => updatePageImage(activePage.id, image)}
+                isPinchingRef={isPinchingRef}
               />
             </article>
           </div> : <div className="empty-state">ページがありません</div>}
