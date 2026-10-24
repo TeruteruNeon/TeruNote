@@ -502,7 +502,13 @@ function App() {
   const [redoStack, setRedoStack] = useState<Array<{ pageId: string; image: string }>>([])
   const [restoreVersion, setRestoreVersion] = useState(0)
   const [dragCategoryId, setDragCategoryId] = useState<string | null>(null)
-  const [dragPageId, setDragPageId] = useState<string | null>(null)
+const [dragPageId, setDragPageId] = useState<string | null>(null)
+
+const dragStartRef = useRef<{ x: number; y: number } | null>(null)
+const dragMovedRef = useRef(false)
+const suppressClickRef = useRef(false)
+
+const DRAG_THRESHOLD = 6
   const activeCategory = notebook.categories.find(c => c.id === activeCategoryId) ?? notebook.categories[0]
   const activePage = activeCategory?.pages.find(p => p.id === activePageId) ?? activeCategory?.pages[0]
   const paperDimensions = getNotebookPaperSize(notebook)
@@ -628,6 +634,44 @@ function App() {
     restorePageImage(activePage.id, entry.image)
     setRestoreVersion(version => version + 1)
   }
+  const startListDrag = (
+  event: PointerEvent<HTMLButtonElement>,
+) => {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+
+  dragStartRef.current = {
+    x: event.clientX,
+    y: event.clientY,
+  }
+  dragMovedRef.current = false
+  suppressClickRef.current = false
+}
+
+const updateListDrag = (
+  event: PointerEvent<HTMLButtonElement>,
+  onStart: () => void,
+) => {
+  const start = dragStartRef.current
+  if (!start) return
+
+  const distance = Math.hypot(
+    event.clientX - start.x,
+    event.clientY - start.y,
+  )
+
+  if (!dragMovedRef.current && distance >= DRAG_THRESHOLD) {
+    dragMovedRef.current = true
+    suppressClickRef.current = true
+    onStart()
+  }
+}
+
+const finishListDrag = () => {
+  dragStartRef.current = null
+  dragMovedRef.current = false
+  setDragCategoryId(null)
+  setDragPageId(null)
+}
   const reorderCategories = (fromId: string, toId: string) => {
     if (fromId === toId) return
     setNotebook(previous => { const items = [...previous.categories]; const from = items.findIndex(item => item.id === fromId); const to = items.findIndex(item => item.id === toId); if (from < 0 || to < 0) return previous; const [moved] = items.splice(from, 1); items.splice(to, 0, moved); return { ...previous, categories: items } })

@@ -186,10 +186,12 @@ export async function saveBytesFile(
   return { saved: true, path: null }
 }
 
+
 export async function openTextFile(
   filterName: string,
   extension: string,
 ): Promise<OpenResult> {
+  // Windowsアプリ版
   if (isTauriApp()) {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const { readTextFile } = await import('@tauri-apps/plugin-fs')
@@ -207,6 +209,7 @@ export async function openTextFile(
     }
   }
 
+  // Web版：ブラウザのファイル選択機能を使う
   return new Promise((resolve, reject) => {
     const input = document.createElement('input')
     input.type = 'file'
@@ -214,43 +217,50 @@ export async function openTextFile(
 
     let finished = false
 
+    const cleanup = () => {
+      input.removeEventListener('change', onChange)
+      input.removeEventListener('cancel', onCancel)
+      input.remove()
+    }
+
     const finish = (result: OpenResult) => {
       if (finished) return
       finished = true
-      window.removeEventListener('focus', onFocus)
-      input.remove()
+      cleanup()
       resolve(result)
     }
 
-    const onFocus = () => {
-      window.setTimeout(() => {
-        if (!input.files?.length) finish(null)
-      }, 500)
+    const onCancel = () => {
+      finish(null)
     }
 
-    input.addEventListener('change', async () => {
+    const onChange = async () => {
       const file = input.files?.[0]
+
       if (!file) {
         finish(null)
         return
       }
 
       try {
-        finish({ text: await file.text(), path: null })
+        const text = await file.text()
+        finish({ text, path: null })
       } catch (error) {
-        if (!finished) {
-          finished = true
-          window.removeEventListener('focus', onFocus)
-          input.remove()
-          reject(error)
-        }
+        if (finished) return
+        finished = true
+        cleanup()
+        reject(error)
       }
-    })
+    }
 
-    window.addEventListener('focus', onFocus)
+    input.addEventListener('change', onChange)
+    input.addEventListener('cancel', onCancel)
+
+    document.body.appendChild(input)
     input.click()
   })
 }
+
 
 export async function writeExistingTextFile(
   path: string,
