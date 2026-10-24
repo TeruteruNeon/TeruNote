@@ -1220,9 +1220,35 @@ const finishListDrag = () => {
           <button type="button" onClick={deleteCategory}>削除</button>
         </div>
         <div className="category-list" onPointerUp={() => setDragCategoryId(null)} onPointerCancel={() => setDragCategoryId(null)}>
-          {notebook.categories.map(category => <button key={category.id} data-category-id={category.id} type="button" onPointerDown={() => setDragCategoryId(category.id)} onPointerEnter={() => { if (dragCategoryId && dragCategoryId !== category.id) reorderCategories(dragCategoryId, category.id) }} onPointerUp={() => setDragCategoryId(null)} className={`${category.id === activeCategory?.id ? 'category-button selected' : 'category-button'} ${dragCategoryId === category.id ? 'dragging' : ''}`} onClick={() => changeCategory(category)}>
-            <span className="category-symbol">▤</span><span className="category-name">{category.name}</span><span className="item-count">{category.pages.length}</span>
-          </button>)}
+          {notebook.categories.map(category => <button
+  key={category.id}
+  data-category-id={category.id}
+  type="button"
+  onPointerDown={startListDrag}
+  onPointerMove={event =>
+    updateListDrag(event, () => setDragCategoryId(category.id))
+  }
+  onPointerEnter={() => {
+    if (dragMovedRef.current && dragCategoryId && dragCategoryId !== category.id) {
+      reorderCategories(dragCategoryId, category.id)
+      setDragCategoryId(category.id)
+    }
+  }}
+  onPointerUp={finishListDrag}
+  onPointerCancel={finishListDrag}
+  onClick={() => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
+    changeCategory(category)
+  }}
+  className={`${category.id === activeCategory?.id ? 'category-button selected' : 'category-button'} ${dragCategoryId === category.id ? 'dragging' : ''}`}
+>
+  <span className="category-symbol">▤</span>
+  <span className="category-name">{category.name}</span>
+  <span className="item-count">{category.pages.length}</span>
+</button>)}
         </div>
         <div className="sidebar-bottom">
           <div className="notebook-paper-size-setting">
