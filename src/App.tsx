@@ -487,6 +487,7 @@ function App() {
   )
 
   const pinchDistanceRef = useRef(0)
+  const pinchZoomRef = useRef(0.5)
   const pinchCenterRef = useRef({ x: 0, y: 0 })
   const panDragRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null)
   const [color, setColor] = useState('#202020')
@@ -707,7 +708,8 @@ function App() {
     event.preventDefault()
     changeZoomAt(event.clientX, event.clientY, event.deltaY)
   }
-  const handleStagePointerDownCapture = (
+
+const handleStagePointerDownCapture = (
   event: PointerEvent<HTMLDivElement>
 ) => {
   if (event.pointerType !== 'touch') return
@@ -731,10 +733,12 @@ function App() {
       x: (points[0].x + points[1].x) / 2,
       y: (points[0].y + points[1].y) / 2,
     }
+
+    pinchZoomRef.current = zoom
   }
 }
 
-  const handleStagePointerMoveCapture = (
+const handleStagePointerMoveCapture = (
   event: PointerEvent<HTMLDivElement>
 ) => {
   if (!touchPointersRef.current.has(event.pointerId)) return
@@ -756,34 +760,72 @@ function App() {
   const centerX = (points[0].x + points[1].x) / 2
   const centerY = (points[0].y + points[1].y) / 2
 
-  const previousDistance = pinchDistanceRef.current
   const previousCenter = pinchCenterRef.current
+  const previousDistance = pinchDistanceRef.current
+  const previousZoom = pinchZoomRef.current
 
-  // 2本指の中心が移動した分だけ紙を動かす
   const stage = paperStageRef.current
+  if (!stage) return
 
-  if (stage) {
-    stage.scrollLeft -= centerX - previousCenter.x
-    stage.scrollTop -= centerY - previousCenter.y
+  const rect = stage.getBoundingClientRect()
+
+  // ① 2本指の中心の移動量を計算
+  const moveX = centerX - previousCenter.x
+  const moveY = centerY - previousCenter.y
+
+  // ② ズームの変化が小さい場合はズームしない
+  const distanceChanged =
+    Math.abs(distance - previousDistance) > 3
+
+  let nextZoom = previousZoom
+
+  if (
+    distanceChanged &&
+    previousDistance > 0 &&
+    distance > 0
+  ) {
+    const ratio = distance / previousDistance
+
+    nextZoom = Math.min(
+      3,
+      Math.max(0.15, previousZoom * ratio)
+    )
   }
 
-  // 次の移動量を計算するために中心位置を保存
+  // ③ 移動とズームをまとめてスクロール位置に反映
+  const zoomChanged = nextZoom !== previousZoom
+
+  if (zoomChanged) {
+    const anchorX = stage.scrollLeft - moveX + centerX - rect.left
+    const anchorY = stage.scrollTop - moveY + centerY - rect.top
+
+    stage.scrollLeft =
+      (anchorX / previousZoom) * nextZoom -
+      (centerX - rect.left)
+
+    stage.scrollTop =
+      (anchorY / previousZoom) * nextZoom -
+      (centerY - rect.top)
+
+    pinchZoomRef.current = nextZoom
+    setZoom(nextZoom)
+  } else {
+    stage.scrollLeft -= moveX
+    stage.scrollTop -= moveY
+  }
+
+  // ④ 次回の比較用に位置を更新
   pinchCenterRef.current = {
     x: centerX,
     y: centerY,
   }
 
-  pinchDistanceRef.current = distance
-
-  // 2本指の距離が変わったときだけズームする
-  if (previousDistance > 0 && distance > 0) {
-    changeZoomAt(
-      centerX,
-      centerY,
-      -Math.log(distance / previousDistance) / 0.002
-    )
+  // ズームした場合のみ距離の基準を更新
+  if (zoomChanged) {
+    pinchDistanceRef.current = distance
   }
 }
+
   const handleStagePointerUpCapture = (
     event: PointerEvent<HTMLDivElement>
   ) => {
