@@ -300,3 +300,13 @@ button:disabled { cursor: not-allowed; opacity: .42; }
   -webkit-user-drag: none;
   touch-action: pan-y;
 }
+
+/* カテゴリ・ページ一覧では文字選択を無効にする */
+.category-list,
+.category-list *,
+.page-list-scroll,
+.page-list-scroll * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
